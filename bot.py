@@ -192,17 +192,27 @@ async def run_bot():
 
 if __name__ == "__main__":
 
-
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-
 
         threading.Thread(target=run_web).start()
 
+        # TEST MESSAGE
+        async def test_message():
+
+            bot = Bot(token=TELEGRAM_TOKEN)
+
+            await bot.send_message(
+
+                chat_id=TELEGRAM_CHAT_ID,
+
+                text="✅ Bot Connected Successfully"
+
+            )
+
+        asyncio.run(test_message())
 
         asyncio.run(run_bot())
 
-
     else:
-
 
         print("Telegram not configured")
