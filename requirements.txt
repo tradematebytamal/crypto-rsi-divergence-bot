@@ -1,5 +1,5 @@
-python-binance
+requests
 pandas
 numpy
 python-telegram-bot
-requests
+
