@@ -25,7 +25,7 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
 # Initialize Binance Client (Public data only, no API key needed for klines)
-binance_client = Client()
+binance_client = Client(ping=False)
 
 def get_rsi(series, period=14):
     delta = series.diff()
