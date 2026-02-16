@@ -10,13 +10,15 @@ from telegram import Bot
 from flask import Flask
 
 
+# =====================
 # WEB SERVER
+# =====================
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "ELITE BOT RUNNING"
+    return "INSTITUTIONAL BOT RUNNING"
 
 
 def run_web():
@@ -24,17 +26,26 @@ def run_web():
     app.run(host="0.0.0.0", port=port)
 
 
+# =====================
 # LOGGING
+# =====================
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+logger.info("INSTITUTIONAL BOT STARTED")
 
+
+# =====================
 # SETTINGS
+# =====================
 
-SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT"]
-
-INTERVAL = "30m"
+COINS = {
+"bitcoin":"BTCUSDT",
+"ethereum":"ETHUSDT",
+"solana":"SOLUSDT",
+"ripple":"XRPUSDT"
+}
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -42,128 +53,142 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 last_alert = {}
 
 
-# GET DATA FIXED
+# =====================
+# GET SAFE DATA
+# =====================
 
-def get_data(symbol):
+def get_data(coin, days):
 
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={INTERVAL}&limit=200"
+    url=f"https://api.coingecko.com/api/v3/coins/{coin}/ohlc?vs_currency=usd&days={days}"
 
-    response = requests.get(url)
+    response=requests.get(url,timeout=10)
 
-    data = response.json()
+    data=response.json()
 
-    if not isinstance(data, list):
-
-        logger.error("Invalid Binance Data")
-
+    if not isinstance(data,list) or len(data)<30:
         return None
 
+    df=pd.DataFrame(data,columns=["time","open","high","low","close"])
 
-    df = pd.DataFrame(data)
-
-
-    df.columns = [
-
-        "time","open","high","low","close",
-
-        "volume","ct","qav","trades",
-
-        "tb","tq","ignore"
-
-    ]
-
-
-    df["close"] = df["close"].astype(float)
-
-    df["high"] = df["high"].astype(float)
-
-    df["low"] = df["low"].astype(float)
-
-    df["volume"] = df["volume"].astype(float)
-
+    df["close"]=df["close"].astype(float)
+    df["high"]=df["high"].astype(float)
+    df["low"]=df["low"].astype(float)
 
     return df
 
 
+# =====================
 # RSI
+# =====================
 
-def calculate_rsi(df):
+def rsi(df):
 
-    delta = df["close"].diff()
+    delta=df["close"].diff()
 
-    gain = delta.clip(lower=0)
+    gain=delta.clip(lower=0)
 
-    loss = -delta.clip(upper=0)
+    loss=-delta.clip(upper=0)
 
-    avg_gain = gain.rolling(14).mean()
+    avg_gain=gain.rolling(14).mean()
 
-    avg_loss = loss.rolling(14).mean()
+    avg_loss=loss.rolling(14).mean()
 
-    rs = avg_gain / avg_loss
+    rs=avg_gain/avg_loss
 
-    df["rsi"] = 100 - (100/(1+rs))
+    df["rsi"]=100-(100/(1+rs))
 
     return df
 
 
-# SIGNAL
+# =====================
+# EMA TREND FILTER
+# =====================
 
-def detect_signal(df):
+def ema(df):
 
-    df = calculate_rsi(df)
+    df["ema"]=df["close"].ewm(span=50).mean()
 
-    price1 = df["close"].iloc[-6]
-
-    price2 = df["close"].iloc[-1]
-
-    rsi1 = df["rsi"].iloc[-6]
-
-    rsi2 = df["rsi"].iloc[-1]
+    return df
 
 
-    entry = price2
+# =====================
+# SIGNAL ENGINE
+# =====================
+
+def signal_engine(df_small, df_big):
+
+    df_small=rsi(df_small)
+    df_small=ema(df_small)
+
+    df_big=ema(df_big)
 
 
-    if price2 < price1 and rsi2 > rsi1:
+    price1=df_small["close"].iloc[-6]
+    price2=df_small["close"].iloc[-1]
 
-        sl = df["low"].iloc[-6]
+    rsi1=df_small["rsi"].iloc[-6]
+    rsi2=df_small["rsi"].iloc[-1]
 
-        target = entry + (entry-sl)*2
+    trend_small=df_small["close"].iloc[-1] > df_small["ema"].iloc[-1]
 
-        return "BUY", entry, sl, target
-
-
-    if price2 > price1 and rsi2 < rsi1:
-
-        sl = df["high"].iloc[-6]
-
-        target = entry - (sl-entry)*2
-
-        return "SELL", entry, sl, target
+    trend_big=df_big["close"].iloc[-1] > df_big["ema"].iloc[-1]
 
 
-    return None,None,None,None
+    entry=price2
 
 
+    # INSTITUTIONAL BUY
+
+    if price2<price1 and rsi2>rsi1 and trend_big:
+
+        sl=df_small["low"].iloc[-6]
+
+        target=entry+(entry-sl)*2
+
+        confidence=90
+
+        return "BUY",entry,sl,target,confidence
+
+
+    # INSTITUTIONAL SELL
+
+    if price2>price1 and rsi2<rsi1 and not trend_big:
+
+        sl=df_small["high"].iloc[-6]
+
+        target=entry-(sl-entry)*2
+
+        confidence=90
+
+        return "SELL",entry,sl,target,confidence
+
+
+    return None,None,None,None,None
+
+
+# =====================
 # TELEGRAM
+# =====================
 
-async def send_alert(symbol,side,entry,sl,target):
+async def send_alert(symbol,side,entry,sl,target,confidence):
 
-    bot = Bot(token=TELEGRAM_TOKEN)
+    bot=Bot(token=TELEGRAM_TOKEN)
 
     msg=f"""
 
-🚨 CRYPTO CITY ELITE SIGNAL 🚨
+🏦 INSTITUTIONAL SIGNAL
 
 Coin: {symbol}
 
 Side: {side}
 
-Entry: {round(entry,4)}
+Entry: {round(entry,2)}
 
-Stop Loss: {round(sl,4)}
+Stop Loss: {round(sl,2)}
 
-Target: {round(target,4)}
+Target: {round(target,2)}
+
+Confidence: {confidence}%
 
 Time: {datetime.now()}
 
@@ -172,44 +197,45 @@ Time: {datetime.now()}
     await bot.send_message(
 
         chat_id=TELEGRAM_CHAT_ID,
-
         text=msg
 
     )
 
 
+# =====================
 # LOOP
+# =====================
 
 async def run_bot():
 
-    logger.info("ELITE BOT RUNNING")
-
+    logger.info("INSTITUTIONAL LOOP RUNNING")
 
     while True:
 
         try:
 
-            for symbol in SYMBOLS:
+            for coin in COINS:
 
+                symbol=COINS[coin]
 
-                df=get_data(symbol)
+                df_small=get_data(coin,1)
 
+                df_big=get_data(coin,7)
 
-                if df is None:
-
+                if df_small is None or df_big is None:
                     continue
 
 
-                side,entry,sl,target=detect_signal(df)
+                side,entry,sl,target,confidence=signal_engine(df_small,df_big)
 
 
                 if side:
 
-                    if symbol not in last_alert:
+                    if coin not in last_alert or last_alert[coin]!=side:
 
-                        await send_alert(symbol,side,entry,sl,target)
+                        await send_alert(symbol,side,entry,sl,target,confidence)
 
-                        last_alert[symbol]=side
+                        last_alert[coin]=side
 
 
             await asyncio.sleep(60)
@@ -222,7 +248,9 @@ async def run_bot():
             await asyncio.sleep(30)
 
 
+# =====================
 # START
+# =====================
 
 if __name__=="__main__":
 
