@@ -15,7 +15,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "RSI Bot Running"
+    return "Crypto City PRO Bot Running"
 
 
 def run_web():
@@ -27,19 +27,19 @@ def run_web():
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logger.info("RSI Bot Started Successfully")
+logger.info("CRYPTO CITY PRO BOT STARTED")
 
 
 SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT"]
 
 TIMEFRAME = "30m"
-LOOKBACK = 100
+LOOKBACK = 150
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-# SAFE DATA FETCH
+# GET DATA
 def get_data(symbol):
 
     try:
@@ -60,29 +60,31 @@ def get_data(symbol):
 
         data = response.json()
 
-        if not isinstance(data, list):
-            return None
+        df = pd.DataFrame(data)
 
+        df.columns = [
 
-        df = pd.DataFrame(data, columns=[
             "time","open","high","low","close",
+
             "volume","ct","qav","trades",
+
             "tb","tq","ignore"
-        ])
+
+        ]
 
         df["close"] = df["close"].astype(float)
+        df["high"] = df["high"].astype(float)
+        df["low"] = df["low"].astype(float)
 
         return df
 
-    except Exception as e:
-
-        logger.error(e)
+    except:
 
         return None
 
 
 # RSI
-def calculate_rsi(series, period=14):
+def rsi(series, period=14):
 
     delta = series.diff()
 
@@ -96,63 +98,94 @@ def calculate_rsi(series, period=14):
 
     rs = avg_gain / avg_loss
 
-    rsi = 100 - (100/(1+rs))
-
-    return rsi
+    return 100 - (100/(1+rs))
 
 
-# CHECK SIGNAL
-def check_signal(df):
+# SIGNAL DETECTION
+def detect_signal(df):
 
     if df is None:
         return None
 
-    df["rsi"] = calculate_rsi(df["close"])
+    df["rsi"] = rsi(df["close"])
 
-    price1 = df["close"].iloc[-5]
+    price1 = df["close"].iloc[-10]
     price2 = df["close"].iloc[-1]
 
-    rsi1 = df["rsi"].iloc[-5]
+    rsi1 = df["rsi"].iloc[-10]
     rsi2 = df["rsi"].iloc[-1]
 
+
+    entry = df["close"].iloc[-1]
+
+    atr = df["high"].iloc[-14:].max() - df["low"].iloc[-14:].min()
+
+    stop = entry - atr*0.5
+
+    target = entry + atr
+
+
+    confidence = round(abs(rsi2-rsi1)*2)
+
+
     if price2 < price1 and rsi2 > rsi1:
-        return "Bullish Divergence"
+
+        return "Bullish", entry, stop, target, confidence
+
 
     if price2 > price1 and rsi2 < rsi1:
-        return "Bearish Divergence"
+
+        stop = entry + atr*0.5
+
+        target = entry - atr
+
+        return "Bearish", entry, stop, target, confidence
+
 
     return None
 
 
-# TELEGRAM
-async def send_alert(symbol, signal, price):
+# TELEGRAM ALERT
+async def send_signal(symbol, signal):
 
     bot = Bot(token=TELEGRAM_TOKEN)
 
-    message = f"""
+    direction, entry, stop, target, confidence = signal
 
-🚨 RSI ALERT
+
+    msg = f"""
+
+🚨 CRYPTO CITY PRO SIGNAL 🚨
 
 Coin: {symbol}
 
-Signal: {signal}
+Signal: {direction} Divergence
 
-Price: {price}
+Entry: {round(entry,2)}
 
-Time: {datetime.now()}
+Stop Loss: {round(stop,2)}
+
+Target: {round(target,2)}
+
+Confidence: {confidence}%
+
+Timeframe: 30m
 
 """
 
     await bot.send_message(
+
         chat_id=TELEGRAM_CHAT_ID,
-        text=message
+
+        text=msg
+
     )
 
 
 # MAIN LOOP
 async def run_bot():
 
-    logger.info("Bot Loop Running")
+    logger.info("PRO BOT LOOP RUNNING")
 
     while True:
 
@@ -162,15 +195,13 @@ async def run_bot():
 
                 df = get_data(symbol)
 
-                signal = check_signal(df)
+                signal = detect_signal(df)
 
                 if signal:
 
-                    price = df["close"].iloc[-1]
+                    await send_signal(symbol, signal)
 
-                    await send_alert(symbol, signal, price)
-
-                    logger.info(f"{symbol} {signal}")
+                    logger.info(f"{symbol} SIGNAL SENT")
 
             await asyncio.sleep(60)
 
