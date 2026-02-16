@@ -59,7 +59,6 @@ def get_klines(symbol):
 
     url = "https://api.binance.com/api/v3/klines"
 
-
     params = {
 
         "symbol": symbol,
@@ -70,31 +69,49 @@ def get_klines(symbol):
 
     }
 
-
-    response = requests.get(url)
+    response = requests.get(url, params=params)
 
     data = response.json()
 
+    if not isinstance(data, list):
 
-    df = pd.DataFrame(data)
+        logger.error("Invalid data")
+
+        return None
 
 
-    df.columns = [
+    df = pd.DataFrame(data, columns=[
 
-        "time","open","high","low","close",
+        "time",
 
-        "volume","ct","qav","trades",
+        "open",
 
-        "tb","tq","ignore"
+        "high",
 
-    ]
+        "low",
+
+        "close",
+
+        "volume",
+
+        "ct",
+
+        "qav",
+
+        "trades",
+
+        "tb",
+
+        "tq",
+
+        "ignore"
+
+    ])
 
 
     df["close"] = df["close"].astype(float)
 
-
     return df
-
 
 
 # =====================
