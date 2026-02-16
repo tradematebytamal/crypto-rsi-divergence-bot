@@ -11,15 +11,17 @@ from flask import Flask
 
 
 # =====================
-# WEB SERVER (IMPORTANT FOR RENDER)
+# WEB SERVER FOR RENDER
 # =====================
 
 app = Flask(__name__)
 
 @app.route("/")
+
 def home():
 
     return "Crypto Bot Running"
+
 
 
 def run_web():
@@ -31,7 +33,7 @@ def run_web():
 
 
 # =====================
-# BOT SETTINGS
+# SETTINGS
 # =====================
 
 logging.basicConfig(level=logging.INFO)
@@ -51,83 +53,74 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
+
 # =====================
 # GET DATA
 # =====================
 
 def get_klines(symbol):
 
-    url = "https://api.binance.com/api/v3/klines"
+    try:
 
-    params = {
+        url = "https://api.binance.com/api/v3/klines"
 
-        "symbol": symbol,
+        params = {
 
-        "interval": TIMEFRAME,
+            "symbol": symbol,
 
-        "limit": LOOKBACK
+            "interval": TIMEFRAME,
 
-    }
+            "limit": LOOKBACK
 
-    response = requests.get(url, params=params)
+        }
 
-    data = response.json()
 
-    if not isinstance(data, list):
+        response = requests.get(url, params=params)
 
-        logger.error("Invalid data")
+
+        data = response.json()
+
+
+        if not isinstance(data, list):
+
+            return None
+
+
+        df = pd.DataFrame(data, columns=[
+
+            "time","open","high","low","close",
+
+            "volume","ct","qav","trades",
+
+            "tb","tq","ignore"
+
+        ])
+
+
+        df["close"] = df["close"].astype(float)
+
+
+        return df
+
+
+    except:
 
         return None
 
 
-    df = pd.DataFrame(data, columns=[
-
-        "time",
-
-        "open",
-
-        "high",
-
-        "low",
-
-        "close",
-
-        "volume",
-
-        "ct",
-
-        "qav",
-
-        "trades",
-
-        "tb",
-
-        "tq",
-
-        "ignore"
-
-    ])
-
-
-    df["close"] = df["close"].astype(float)
-
-    return df
-
 
 # =====================
-# TELEGRAM
+# TELEGRAM ALERT
 # =====================
 
 async def send_alert(symbol,price):
-
 
     bot = Bot(token=TELEGRAM_TOKEN)
 
 
     msg = f"""
 
-🚨 Divergence Alert
-
+🚨 Crypto Alert
 
 Coin: {symbol}
 
@@ -149,11 +142,10 @@ Time: {datetime.now()}
 
 
 # =====================
-# MAIN LOOP
+# MAIN BOT
 # =====================
 
 async def run_bot():
-
 
     logger.info("Bot Started")
 
@@ -170,16 +162,15 @@ async def run_bot():
                 df = get_klines(symbol)
 
 
+                if df is None:
+
+                    continue
+
+
                 price = df["close"].iloc[-1]
 
 
-                await send_alert(
-
-                    symbol,
-
-                    price
-
-                )
+                await send_alert(symbol,price)
 
 
             await asyncio.sleep(300)
@@ -205,11 +196,7 @@ if __name__ == "__main__":
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
 
 
-        threading.Thread(
-
-            target=run_web
-
-        ).start()
+        threading.Thread(target=run_web).start()
 
 
         asyncio.run(run_bot())
@@ -218,4 +205,4 @@ if __name__ == "__main__":
     else:
 
 
-        print("Telegram not set")
+        print("Telegram not configured")
