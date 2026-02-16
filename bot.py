@@ -10,12 +10,15 @@ from telegram import Bot
 from flask import Flask
 
 
+# =====================
 # WEB SERVER
+# =====================
+
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Crypto City PRO Bot Running"
+    return "CRYPTO CITY ELITE BOT RUNNING"
 
 
 def run_web():
@@ -23,169 +26,180 @@ def run_web():
     app.run(host="0.0.0.0", port=port)
 
 
+# =====================
 # LOGGING
+# =====================
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-logger.info("CRYPTO CITY PRO BOT STARTED")
+logger.info("ELITE BOT STARTED")
 
+
+# =====================
+# SETTINGS
+# =====================
 
 SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT"]
 
-TIMEFRAME = "30m"
-LOOKBACK = 150
+INTERVAL = "30m"
+LIMIT = 200
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+last_alert = {}
 
+
+# =====================
 # GET DATA
+# =====================
+
 def get_data(symbol):
 
-    try:
+    url = "https://api.binance.com/api/v3/klines"
 
-        url = "https://api.binance.com/api/v3/klines"
+    params = {
+        "symbol": symbol,
+        "interval": INTERVAL,
+        "limit": LIMIT
+    }
 
-        params = {
+    response = requests.get(url, params=params)
+    data = response.json()
 
-            "symbol": symbol,
+    df = pd.DataFrame(data)
 
-            "interval": TIMEFRAME,
+    df.columns = [
+        "time","open","high","low","close",
+        "volume","ct","qav","trades",
+        "tb","tq","ignore"
+    ]
 
-            "limit": LOOKBACK
+    df["close"] = df["close"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["volume"] = df["volume"].astype(float)
 
-        }
-
-        response = requests.get(url, params=params)
-
-        data = response.json()
-
-        df = pd.DataFrame(data)
-
-        df.columns = [
-
-            "time","open","high","low","close",
-
-            "volume","ct","qav","trades",
-
-            "tb","tq","ignore"
-
-        ]
-
-        df["close"] = df["close"].astype(float)
-        df["high"] = df["high"].astype(float)
-        df["low"] = df["low"].astype(float)
-
-        return df
-
-    except:
-
-        return None
+    return df
 
 
+# =====================
 # RSI
-def rsi(series, period=14):
+# =====================
 
-    delta = series.diff()
+def calculate_rsi(df, period=14):
+
+    delta = df["close"].diff()
 
     gain = delta.clip(lower=0)
-
     loss = -delta.clip(upper=0)
 
     avg_gain = gain.rolling(period).mean()
-
     avg_loss = loss.rolling(period).mean()
 
     rs = avg_gain / avg_loss
 
-    return 100 - (100/(1+rs))
+    df["rsi"] = 100 - (100 / (1 + rs))
+
+    return df
 
 
-# SIGNAL DETECTION
+# =====================
+# SIGNAL LOGIC
+# =====================
+
 def detect_signal(df):
 
-    if df is None:
-        return None
+    df = calculate_rsi(df)
 
-    df["rsi"] = rsi(df["close"])
-
-    price1 = df["close"].iloc[-10]
+    price1 = df["close"].iloc[-6]
     price2 = df["close"].iloc[-1]
 
-    rsi1 = df["rsi"].iloc[-10]
+    rsi1 = df["rsi"].iloc[-6]
     rsi2 = df["rsi"].iloc[-1]
 
-
-    entry = df["close"].iloc[-1]
-
-    atr = df["high"].iloc[-14:].max() - df["low"].iloc[-14:].min()
-
-    stop = entry - atr*0.5
-
-    target = entry + atr
+    volume1 = df["volume"].iloc[-6]
+    volume2 = df["volume"].iloc[-1]
 
 
-    confidence = round(abs(rsi2-rsi1)*2)
+    entry = price2
 
 
-    if price2 < price1 and rsi2 > rsi1:
+    # Bullish
 
-        return "Bullish", entry, stop, target, confidence
+    if price2 < price1 and rsi2 > rsi1 and volume2 > volume1:
 
+        sl = df["low"].iloc[-6]
 
-    if price2 > price1 and rsi2 < rsi1:
+        target = entry + (entry - sl) * 2
 
-        stop = entry + atr*0.5
+        confidence = 80
 
-        target = entry - atr
-
-        return "Bearish", entry, stop, target, confidence
-
-
-    return None
+        return "BUY", entry, sl, target, confidence
 
 
-# TELEGRAM ALERT
-async def send_signal(symbol, signal):
+    # Bearish
+
+    if price2 > price1 and rsi2 < rsi1 and volume2 > volume1:
+
+        sl = df["high"].iloc[-6]
+
+        target = entry - (sl - entry) * 2
+
+        confidence = 80
+
+        return "SELL", entry, sl, target, confidence
+
+
+    return None, None, None, None, None
+
+
+# =====================
+# TELEGRAM
+# =====================
+
+async def send_alert(symbol, side, entry, sl, target, confidence):
 
     bot = Bot(token=TELEGRAM_TOKEN)
 
-    direction, entry, stop, target, confidence = signal
+    message = f"""
 
-
-    msg = f"""
-
-🚨 CRYPTO CITY PRO SIGNAL 🚨
+🚨 CRYPTO CITY ELITE SIGNAL 🚨
 
 Coin: {symbol}
 
-Signal: {direction} Divergence
+Side: {side}
 
-Entry: {round(entry,2)}
+Entry: {round(entry,4)}
 
-Stop Loss: {round(stop,2)}
+Stop Loss: {round(sl,4)}
 
-Target: {round(target,2)}
+Target: {round(target,4)}
 
 Confidence: {confidence}%
 
-Timeframe: 30m
+Risk Reward: 1:2
+
+Time: {datetime.now()}
 
 """
 
     await bot.send_message(
 
         chat_id=TELEGRAM_CHAT_ID,
-
-        text=msg
+        text=message
 
     )
 
 
-# MAIN LOOP
+# =====================
+# LOOP
+# =====================
+
 async def run_bot():
 
-    logger.info("PRO BOT LOOP RUNNING")
+    logger.info("ELITE LOOP RUNNING")
 
     while True:
 
@@ -195,15 +209,22 @@ async def run_bot():
 
                 df = get_data(symbol)
 
-                signal = detect_signal(df)
+                side, entry, sl, target, confidence = detect_signal(df)
 
-                if signal:
 
-                    await send_signal(symbol, signal)
+                if side:
 
-                    logger.info(f"{symbol} SIGNAL SENT")
+                    if symbol not in last_alert:
+
+                        await send_alert(symbol, side, entry, sl, target, confidence)
+
+                        last_alert[symbol] = side
+
+                        logger.info(f"Signal Sent {symbol}")
+
 
             await asyncio.sleep(60)
+
 
         except Exception as e:
 
@@ -212,7 +233,10 @@ async def run_bot():
             await asyncio.sleep(30)
 
 
+# =====================
 # START
+# =====================
+
 if __name__ == "__main__":
 
     threading.Thread(target=run_web).start()
