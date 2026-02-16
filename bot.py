@@ -9,6 +9,7 @@ from datetime import datetime
 from telegram import Bot
 from flask import Flask
 
+
 # WEB SERVER
 app = Flask(__name__)
 
@@ -22,9 +23,12 @@ def run_web():
     app.run(host="0.0.0.0", port=port)
 
 
-# SETTINGS
+# LOGGING
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+logger.info("RSI Bot Started Successfully")
+
 
 SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT"]
 
@@ -35,40 +39,46 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
-# GET DATA
+# SAFE DATA FETCH
 def get_data(symbol):
 
-    url = "https://api.binance.com/api/v3/klines"
+    try:
 
-    params = {
+        url = "https://api.binance.com/api/v3/klines"
 
-        "symbol": symbol,
+        params = {
 
-        "interval": TIMEFRAME,
+            "symbol": symbol,
 
-        "limit": LOOKBACK
+            "interval": TIMEFRAME,
 
-    }
+            "limit": LOOKBACK
 
-    response = requests.get(url, params=params)
+        }
 
-    data = response.json()
+        response = requests.get(url, params=params)
 
-    df = pd.DataFrame(data)
+        data = response.json()
 
-    df.columns = [
+        if not isinstance(data, list):
+            return None
 
-        "time","open","high","low","close",
 
-        "volume","ct","qav","trades",
+        df = pd.DataFrame(data, columns=[
+            "time","open","high","low","close",
+            "volume","ct","qav","trades",
+            "tb","tq","ignore"
+        ])
 
-        "tb","tq","ignore"
+        df["close"] = df["close"].astype(float)
 
-    ]
+        return df
 
-    df["close"] = df["close"].astype(float)
+    except Exception as e:
 
-    return df
+        logger.error(e)
+
+        return None
 
 
 # RSI
@@ -91,29 +101,25 @@ def calculate_rsi(series, period=14):
     return rsi
 
 
-# CHECK DIVERGENCE
-def check_divergence(df):
+# CHECK SIGNAL
+def check_signal(df):
+
+    if df is None:
+        return None
 
     df["rsi"] = calculate_rsi(df["close"])
 
     price1 = df["close"].iloc[-5]
-
     price2 = df["close"].iloc[-1]
 
     rsi1 = df["rsi"].iloc[-5]
-
     rsi2 = df["rsi"].iloc[-1]
 
-
     if price2 < price1 and rsi2 > rsi1:
-
         return "Bullish Divergence"
 
-
     if price2 > price1 and rsi2 < rsi1:
-
         return "Bearish Divergence"
-
 
     return None
 
@@ -123,9 +129,9 @@ async def send_alert(symbol, signal, price):
 
     bot = Bot(token=TELEGRAM_TOKEN)
 
-    msg = f"""
+    message = f"""
 
-🚨 RSI DIVERGENCE ALERT
+🚨 RSI ALERT
 
 Coin: {symbol}
 
@@ -138,18 +144,15 @@ Time: {datetime.now()}
 """
 
     await bot.send_message(
-
         chat_id=TELEGRAM_CHAT_ID,
-
-        text=msg
-
+        text=message
     )
 
 
-# BOT LOOP
+# MAIN LOOP
 async def run_bot():
 
-    logger.info("RSI Bot Started")
+    logger.info("Bot Loop Running")
 
     while True:
 
@@ -159,7 +162,7 @@ async def run_bot():
 
                 df = get_data(symbol)
 
-                signal = check_divergence(df)
+                signal = check_signal(df)
 
                 if signal:
 
@@ -169,9 +172,7 @@ async def run_bot():
 
                     logger.info(f"{symbol} {signal}")
 
-
             await asyncio.sleep(60)
-
 
         except Exception as e:
 
